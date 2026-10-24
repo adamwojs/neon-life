@@ -2,6 +2,8 @@ import { NEVER_ALIVE, neighbourCounts, type LifeState } from './engine.ts'
 
 export type ColorMode = 'age' | 'neighbours' | 'gradient' | 'solid'
 export type CellShape = 'square' | 'rounded' | 'circle'
+/** Where the blur is applied: whole image, edges only (sharp centre) or centre only (sharp edges). */
+export type BlurMode = 'uniform' | 'edges' | 'center'
 
 export interface Palette {
   id: string
@@ -38,6 +40,11 @@ export interface RenderOptions {
   ageSpan: number
   /** Faint lattice behind the cells. */
   backgroundGrid: boolean
+  /** Blur radius in cells (0 = off). Relative to cell size so preview and export match. */
+  blur: number
+  blurMode: BlurMode
+  /** Size of the sharp area for 'edges' / blurred area for 'center' (0..1 of the half-diagonal). */
+  blurFocus: number
 }
 
 export interface Layout {
@@ -84,13 +91,15 @@ function buildLut(colors: string[]): string[] {
   return lut
 }
 
-const layerCache = new WeakMap<HTMLCanvasElement, HTMLCanvasElement>()
+const layerCaches = [new WeakMap<HTMLCanvasElement, HTMLCanvasElement>(), new WeakMap<HTMLCanvasElement, HTMLCanvasElement>()]
 
-function getLayer(target: HTMLCanvasElement): HTMLCanvasElement {
-  let layer = layerCache.get(target)
+/** Offscreen canvas of the same size as `target`; `slot` selects one of several independent buffers. */
+function getLayer(target: HTMLCanvasElement, slot = 0): HTMLCanvasElement {
+  const cache = layerCaches[slot]
+  let layer = cache.get(target)
   if (!layer) {
     layer = document.createElement('canvas')
-    layerCache.set(target, layer)
+    cache.set(target, layer)
   }
   if (layer.width !== target.width || layer.height !== target.height) {
     layer.width = target.width
@@ -233,5 +242,48 @@ export function renderNeon(
     ctx.filter = 'none'
   }
   ctx.drawImage(layer, 0, 0)
+  ctx.restore()
+
+  if (opts.blur > 0) applyBlur(target, cs * opts.blur, opts)
+}
+
+/** Blurs the composed image, optionally masked by a radial gradient (tilt-shift style). */
+function applyBlur(target: HTMLCanvasElement, radius: number, opts: RenderOptions): void {
+  const { width: w, height: h } = target
+  const blurred = getLayer(target, 1)
+  const bctx = blurred.getContext('2d')!
+  bctx.save()
+  bctx.globalCompositeOperation = 'source-over'
+  bctx.globalAlpha = 1
+  // Solid background underneath keeps the image edges from fading to transparent.
+  bctx.filter = 'none'
+  bctx.fillStyle = opts.background
+  bctx.fillRect(0, 0, w, h)
+  bctx.filter = `blur(${radius}px)`
+  bctx.drawImage(target, 0, 0)
+  bctx.filter = 'none'
+
+  if (opts.blurMode !== 'uniform') {
+    const cx = w / 2
+    const cy = h / 2
+    const half = Math.hypot(cx, cy)
+    const inner = half * Math.min(0.95, opts.blurFocus)
+    const outer = Math.max(inner + half * 0.05, Math.min(half, inner + half * 0.45))
+    const g = bctx.createRadialGradient(cx, cy, inner, cx, cy, outer)
+    const [a, b] = opts.blurMode === 'edges' ? ['rgba(0,0,0,0)', 'rgba(0,0,0,1)'] : ['rgba(0,0,0,1)', 'rgba(0,0,0,0)']
+    g.addColorStop(0, a)
+    g.addColorStop(1, b)
+    bctx.globalCompositeOperation = 'destination-in'
+    bctx.fillStyle = g
+    bctx.fillRect(0, 0, w, h)
+  }
+  bctx.restore()
+
+  const ctx = target.getContext('2d')!
+  ctx.save()
+  ctx.globalCompositeOperation = 'source-over'
+  ctx.globalAlpha = 1
+  ctx.filter = 'none'
+  ctx.drawImage(blurred, 0, 0)
   ctx.restore()
 }

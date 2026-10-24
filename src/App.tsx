@@ -14,7 +14,7 @@ import {
   type Pattern,
   type Symmetry,
 } from './life/patterns.ts'
-import { gridSizeFor, PALETTES, renderNeon, type CellShape, type ColorMode, type RenderOptions } from './life/render.ts'
+import { gridSizeFor, PALETTES, renderNeon, type BlurMode, type CellShape, type ColorMode, type RenderOptions } from './life/render.ts'
 
 const RESOLUTIONS = [
   { id: 'fhd', name: 'Full HD', w: 1920, h: 1080 },
@@ -78,6 +78,9 @@ const INITIAL_STYLE: RenderOptions = {
   trailLength: 6,
   ageSpan: 40,
   backgroundGrid: false,
+  blur: 0,
+  blurMode: 'uniform',
+  blurFocus: 0.35,
 }
 
 function describe(result: SimResult): string {
@@ -599,6 +602,33 @@ export default function App() {
           </Field>
           <Range label="Gap" value={style.gap} min={0} max={0.45} step={0.01} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => setStyleKey('gap', v)} />
           <Range label="Glow" value={style.glow} min={0} max={2} step={0.05} format={(v) => v.toFixed(2)} onChange={(v) => setStyleKey('glow', v)} />
+          <Range label="Blur" value={style.blur} min={0} max={4} step={0.05} format={(v) => (v ? `${v.toFixed(2)} cells` : 'off')} onChange={(v) => setStyleKey('blur', v)} />
+          {style.blur > 0 && (
+            <>
+              <Field label="Blur area">
+                <Segmented<BlurMode>
+                  value={style.blurMode}
+                  onChange={(v) => setStyleKey('blurMode', v)}
+                  options={[
+                    { value: 'uniform', label: 'Whole', title: 'Blur the whole image' },
+                    { value: 'edges', label: 'Edges', title: 'Sharp centre, blurred edges (tilt-shift)' },
+                    { value: 'center', label: 'Centre', title: 'Blurred centre, sharp edges' },
+                  ]}
+                />
+              </Field>
+              {style.blurMode !== 'uniform' && (
+                <Range
+                  label={style.blurMode === 'edges' ? 'Sharp area' : 'Blurred area'}
+                  value={style.blurFocus}
+                  min={0}
+                  max={0.95}
+                  step={0.01}
+                  format={(v) => `${Math.round(v * 100)}%`}
+                  onChange={(v) => setStyleKey('blurFocus', v)}
+                />
+              )}
+            </>
+          )}
           <label className="check">
             <input type="checkbox" checked={style.core} onChange={(e) => setStyleKey('core', e.target.checked)} />
             Bright neon core

@@ -12,7 +12,7 @@ image is a live cell of the simulated generation — the picture is the real sta
   with checkpoints, so scrubbing is fast. Stable, oscillating and extinct states are detected.
 - **Playback** – watch the evolution from generation 0 to the selected step.
 - **Neon styling** – palettes or custom colours, colour by age / neighbours / position, cell shape,
-  gap, glow, neon core, background lattice and optional afterglow of recently dead cells.
+  gap, glow, configurable blur (whole image, edges or centre), neon core, background lattice and optional afterglow of recently dead cells.
 - **Export** – PNG / JPEG / WebP at preset (Full HD, QHD, 4K, ultrawide, phones…), screen or
   custom resolutions. The grid size is derived from the resolution and cell size, so the preview
   matches the exported wallpaper exactly. Wrapped (toroidal) edges are supported.
