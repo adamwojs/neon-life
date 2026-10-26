@@ -166,6 +166,7 @@ input[type='number'],
 select,
 textarea {
   width: 100%;
+  min-width: 0;
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -225,6 +226,10 @@ button {
 
 button:hover:not(:disabled) {
   border-color: var(--accent);
+}
+
+input:disabled {
+  opacity: 0.6;
 }
 
 button:disabled {
@@ -370,6 +375,13 @@ button.primary:hover:not(:disabled) {
   bottom: 0;
   height: 3px;
   background: rgba(255, 255, 255, 0.08);
+}
+
+.progress.inline {
+  position: static;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
 }
 
 .progress > div {

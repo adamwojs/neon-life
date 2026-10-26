@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Preview, type Tool } from './components/Preview.tsx'
 import { Field, NumberInput, Range, Section, Segmented } from './components/ui.tsx'
 import { useSimulation, type SimResult } from './hooks/useSimulation.ts'
@@ -14,6 +14,7 @@ import {
   type Pattern,
   type Symmetry,
 } from './life/patterns.ts'
+import { exportGif, gifFrameGenerations } from './life/gifExport.ts'
 import { gridSizeFor, PALETTES, renderNeon, type BlurMode, type CellShape, type ColorMode, type RenderOptions } from './life/render.ts'
 
 const RESOLUTIONS = [
@@ -44,6 +45,31 @@ interface GenSettings {
   patternId: string
   scatterCount: number
   randomOrientation: boolean
+}
+
+const GIF_SCALES = [1, 0.75, 0.5, 0.33, 0.25]
+const MAX_GIF_FRAMES = 1500
+
+interface GifSettings {
+  from: number
+  every: number
+  fps: number
+  scale: number
+  holdLast: number
+  loop: boolean
+}
+
+function downloadBlob(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 5000)
+}
+
+function formatBytes(n: number): string {
+  return n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
 const randomSeed = () => Math.floor(Math.random() * 1_000_000)
@@ -128,6 +154,10 @@ export default function App() {
   const [format, setFormat] = useState<ExportFormat>('png')
   const [quality, setQuality] = useState(0.92)
   const [exporting, setExporting] = useState(false)
+  const [gif, setGif] = useState<GifSettings>({ from: 0, every: 1, fps: 15, scale: 0.5, holdLast: 1500, loop: true })
+  const [gifProgress, setGifProgress] = useState<number | null>(null)
+  const [gifInfo, setGifInfo] = useState<string | null>(null)
+  const gifAbort = useRef<AbortController | null>(null)
 
   const [rleText, setRleText] = useState('')
   const [rleError, setRleError] = useState<string | null>(null)
@@ -230,18 +260,55 @@ export default function App() {
       renderNeon(canvas, sim.result.state, { width: size.w, height: size.h, cellSize }, style, wrap)
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, `image/${format}`, quality))
       if (!blob) throw new Error('Could not encode image')
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `neon-life-${size.w}x${size.h}-gen${steps}.${format === 'jpeg' ? 'jpg' : format}`
-      a.click()
-      setTimeout(() => URL.revokeObjectURL(url), 5000)
+      downloadBlob(blob, `neon-life-${size.w}x${size.h}-gen${steps}.${format === 'jpeg' ? 'jpg' : format}`)
     } catch (err) {
       alert(`Export failed: ${(err as Error).message}`)
     } finally {
       setExporting(false)
     }
   }
+
+  const gifFrom = Math.min(gif.from, steps)
+  const gifFrames = gifFrameGenerations(gifFrom, steps, gif.every).length
+  const gifW = Math.max(1, Math.round(size.w * gif.scale))
+  const gifH = Math.max(1, Math.round(size.h * gif.scale))
+  const gifSeconds = (gifFrames * Math.max(20, Math.round(1000 / gif.fps)) + gif.holdLast) / 1000
+
+  const exportAnimatedGif = async () => {
+    const controller = new AbortController()
+    gifAbort.current = controller
+    setGifInfo(null)
+    setGifProgress(0)
+    try {
+      const blob = await exportGif(
+        {
+          initial: initial.grid,
+          wrap,
+          from: gifFrom,
+          to: steps,
+          every: gif.every,
+          fps: gif.fps,
+          holdLast: gif.holdLast,
+          loop: gif.loop,
+          width: gifW,
+          height: gifH,
+          cellSize: cellSize * (gifW / size.w),
+          style,
+        },
+        (done, total) => setGifProgress(done / total),
+        controller.signal,
+      )
+      downloadBlob(blob, `neon-life-${gifW}x${gifH}-gen${gifFrom}-${steps}.gif`)
+      setGifInfo(`Saved ${gifFrames} frames, ${formatBytes(blob.size)}`)
+    } catch (err) {
+      if ((err as Error).name !== 'AbortError') alert(`GIF export failed: ${(err as Error).message}`)
+    } finally {
+      gifAbort.current = null
+      setGifProgress(null)
+    }
+  }
+
+  useEffect(() => () => gifAbort.current?.abort(), [])
 
   const loadRle = (mode: 'replace' | 'stamp') => {
     try {
@@ -668,6 +735,62 @@ export default function App() {
             Every lit cell is a live cell of generation {steps}
             {style.trails ? '; afterglow marks cells that died in the last generations' : ''}.
           </p>
+
+          <h3>Animated GIF</h3>
+          <p className="note">Records the evolution up to generation {steps} with the current style.</p>
+          <div className="row">
+            <Field label="From gen">
+              <NumberInput value={gifFrom} min={0} max={steps} onChange={(from) => setGif((g) => ({ ...g, from }))} />
+            </Field>
+            <Field label="To gen">
+              <input type="number" value={steps} disabled title="Set by “Evolution steps”" />
+            </Field>
+            <Field label="Every">
+              <NumberInput value={gif.every} min={1} max={1000} onChange={(every) => setGif((g) => ({ ...g, every }))} />
+            </Field>
+          </div>
+          <Range label="Frame rate" value={gif.fps} min={1} max={50} format={(v) => `${v} fps`} onChange={(fps) => setGif((g) => ({ ...g, fps }))} />
+          <Field label="Size">
+            <select value={gif.scale} onChange={(e) => setGif((g) => ({ ...g, scale: Number(e.target.value) }))}>
+              {GIF_SCALES.map((sc) => (
+                <option key={sc} value={sc}>
+                  {Math.round(sc * 100)}% — {Math.round(size.w * sc)}×{Math.round(size.h * sc)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Range
+            label="Hold last frame"
+            value={gif.holdLast}
+            min={0}
+            max={5000}
+            step={100}
+            format={(v) => `${(v / 1000).toFixed(1)} s`}
+            onChange={(holdLast) => setGif((g) => ({ ...g, holdLast }))}
+          />
+          <label className="check">
+            <input type="checkbox" checked={gif.loop} onChange={(e) => setGif((g) => ({ ...g, loop: e.target.checked }))} />
+            Loop forever
+          </label>
+          <p className={gifFrames > MAX_GIF_FRAMES ? 'error' : 'note'}>
+            {gifFrames} frames · {gifSeconds.toFixed(1)} s
+            {gifFrames > MAX_GIF_FRAMES ? ` — too many frames (max ${MAX_GIF_FRAMES}); increase “Every”` : ''}
+          </p>
+          {gifProgress === null ? (
+            <button type="button" className="primary" disabled={steps === 0 || gifFrames > MAX_GIF_FRAMES} onClick={exportAnimatedGif}>
+              ⬇ Download GIF {gifW}×{gifH}
+            </button>
+          ) : (
+            <>
+              <div className="progress inline">
+                <div style={{ width: `${Math.round(gifProgress * 100)}%` }} />
+              </div>
+              <button type="button" onClick={() => gifAbort.current?.abort()}>
+                Cancel ({Math.round(gifProgress * 100)}%)
+              </button>
+            </>
+          )}
+          {gifInfo && <p className="note">{gifInfo}</p>}
         </Section>
       </aside>
 
